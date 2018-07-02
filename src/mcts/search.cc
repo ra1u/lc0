@@ -684,7 +684,7 @@ void SearchWorker::ExtendNode(Node* node) {
   }
   
   //SyzygyTablebase::max_cardinality == 6
-  if(board.piece_count < 6 && board.dtz == 0  && !board.can_castle(ANY_CASTLING)) {
+  if(board.piece_count <= 6 && board.GetNoCapturePly == 0  && !board.can_castle(ANY_CASTLING)) {
     SyzygyTablebase::ProbeState* result;
     WDLScore wdl = probe_wdl(board.pos, &result);
     if (result == OK) {
