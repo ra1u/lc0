@@ -683,10 +683,11 @@ void SearchWorker::ExtendNode(Node* node) {
     }
   }
   
-  if(board.piece_count < 6 && board.dtz == 0) { //SyzygyTablebase::max_cardinality
-    ProbeState* result;
-    WDLScore wdl = probe_wdl(board.pos, result);
-    if (ProbeState == OK) {
+  //SyzygyTablebase::max_cardinality == 6
+  if(board.piece_count < 6 && board.dtz == 0  && !board.can_castle(ANY_CASTLING)) {
+    SyzygyTablebase::ProbeState* result;
+    WDLScore wdl = probe_wdl(board.pos, &result);
+    if (result == OK) {
       if (wdl == WDL_WIN) { //do we need && white to move? I don't see it on line 660
         node->MakeTerminal(GameResult::WHITE_WON);
       } else if (wdl == WDL_LOSS) {
@@ -694,6 +695,7 @@ void SearchWorker::ExtendNode(Node* node) {
       } else { //cursed wins counted as draws
         node->MakeTerminal(GameResult::DRAW); 
       }
+      return;
     }
   }
   
