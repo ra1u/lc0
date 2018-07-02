@@ -685,7 +685,7 @@ void SearchWorker::ExtendNode(Node* node) {
   
   //WDL probing
   if(board.our + board.their <= SyzygyTablebase::max_cardinality && board.GetNoCapturePly == 0
-     && !board.can_castle(ANY_CASTLING)) {
+     && board.castlings_.as_int() == 0) {
     SyzygyTablebase::ProbeState* result;
     WDLScore wdl = probe_wdl(board.pos, &result);
     if (result == OK) {
