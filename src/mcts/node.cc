@@ -275,7 +275,13 @@ Move Node::GetMove(bool flip) const {
 
 void Node::MakeTerminal(GameResult result) {
   is_terminal_ = true;
-  q_ = (result == GameResult::DRAW) ? 0.0f : 1.0f;
+  if (result == GameResult::DRAW) {
+    q_ = 0.0f;
+  else if (result == GameResult::WHITE_WON) {
+    q_ = 1.0f;
+  } else {
+    q_ = -1.0f;
+  }
 }
 
 bool Node::TryStartScoreUpdate() {
