@@ -688,6 +688,7 @@ void SearchWorker::ExtendNode(Node* node) {
     SyzygyTablebase::ProbeState* result;
     WDLScore wdl = probe_wdl(board.pos, &result);
     if (result == OK) {
+      //tbhits++; need a counter to increment
       if (wdl == WDL_WIN) { //do we need && white to move? I don't see it on line 660
         node->MakeTerminal(GameResult::WHITE_WON);
       } else if (wdl == WDL_LOSS) {
