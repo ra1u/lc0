@@ -682,7 +682,16 @@ void SearchWorker::ExtendNode(Node* node) {
       return;
     }
   }
-
+  
+  if(board.piece_count < 6) { //Tablebases::Cardinality
+    WDL = WDLProbe(board);
+    if (WDL == win) { //do we need && white to move? I don't see it on line 660
+      node->MakeTerminal(GameResult::WHITE_WON);
+    } else { //cursed wins counted as draws
+      node->MakeTerminal(GameResult::DRAW); 
+    }
+  }
+  
   // Add legal moves as children to this node.
   for (const auto& move : legal_moves) node->CreateChild(move);
 }
