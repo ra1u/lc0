@@ -123,9 +123,112 @@ void TransformIn(const size_t batch_size, const float *input,
     }
 }
 
+//
+void TransformIn2(const size_t batch_size, const float *input,
+                  const size_t channels, float *output)
+{
+    static const size_t Par = 16;
+    float x[Par][kWinogradAlpha][kWinogradAlpha];
+    float T1[Par][kWinogradAlpha][kWinogradAlpha];
+
+    for (size_t batch_index = 0; batch_index < batch_size; batch_index++) {
+        const float *input_batch =
+            input + batch_index * kWidth * kHeight * channels;
+        float *V_batch = &output[channels * kTiles * batch_index];
+        size_t channel_step = Par;
+        for (size_t channel_long = 0; channel_long < channels;
+            channel_long += channel_step) {
+            channel_step = Par;
+
+            for (int block_y = 0; block_y < kWtiles; block_y++) {
+                for (int block_x = 0; block_x < kWtiles; block_x++) {
+                    // Tiles overlap by 2
+                    const int yin = 2 * block_y - 1;
+                    const int xin = 2 * block_x - 1;
+
+                    for (size_t ch = 0; ch < channel_step; ++ch) {
+                        const size_t channel = channel_long + ch;
+                        float *V_channel = V_batch + channel;
+                        const float *input_channel =
+                            input_batch + channel * (kWidth * kHeight);
+                        for (int i = 0; i < kWinogradAlpha; i++) {
+                            for (int j = 0; j < kWinogradAlpha; j++) {
+                                if ((yin + i) >= 0 && (xin + j) >= 0 &&
+                                    (yin + i) < kHeight && (xin + j) < kWidth) {
+                                    x[ch][i][j] = input_channel[(yin + i) * kWidth +
+                                                            (xin + j)];
+                                }
+                                else {
+                                    x[ch][i][j] = 0.0f;
+                                }
+                            }
+                        }
+
+                        // Calculates transpose(B).x.B
+                        // B = [[ 1.0,  0.0,  0.0,  0.0],
+                        //      [ 0.0,  1.0, -1.0,  1.0],
+                        //      [-1.0,  1.0,  1.0,  0.0],
+                        //      [ 0.0,  0.0,  0.0, -1.0]]
+
+                        //     WinogradTile T1, T2;
+
+                        T1[ch][0][0] = x[ch][0][0] - x[ch][2][0];
+                        T1[ch][0][1] = x[ch][0][1] - x[ch][2][1];
+                        T1[ch][0][2] = x[ch][0][2] - x[ch][2][2];
+                        T1[ch][0][3] = x[ch][0][3] - x[ch][2][3];
+                        T1[ch][1][0] = x[ch][1][0] + x[ch][2][0];
+                        T1[ch][1][1] = x[ch][1][1] + x[ch][2][1];
+                        T1[ch][1][2] = x[ch][1][2] + x[ch][2][2];
+                        T1[ch][1][3] = x[ch][1][3] + x[ch][2][3];
+                        T1[ch][2][0] = x[ch][2][0] - x[ch][1][0];
+                        T1[ch][2][1] = x[ch][2][1] - x[ch][1][1];
+                        T1[ch][2][2] = x[ch][2][2] - x[ch][1][2];
+                        T1[ch][2][3] = x[ch][2][3] - x[ch][1][3];
+                        T1[ch][3][0] = x[ch][1][0] - x[ch][3][0];
+                        T1[ch][3][1] = x[ch][1][1] - x[ch][3][1];
+                        T1[ch][3][2] = x[ch][1][2] - x[ch][3][2];
+                        T1[ch][3][3] = x[ch][1][3] - x[ch][3][3];
+                    }
+                    const auto V_incr = channels * kTiles * batch_size;
+                    const size_t channel = channel_long;
+                    float *V_channel = V_batch + channel;
+                    float *wTile_V =
+                        V_channel + channels * (block_y * kWtiles + block_x);
+
+		    #define M(a0, a1, op, b1, b2)                                                  \
+			do {                                                                       \
+			    const size_t idx = channel_step;                                           \
+			    for (size_t i = 0; i < idx; ++i) {                                     \
+				wTile_V[i] = T1[i][a0][a1] op T1[i][b1][b2];                             \
+			    };                                                                     \
+			    wTile_V += V_incr;                                                     \
+			} while (0)
+
+                    M(0, 0, -, 0, 2);
+                    M(0, 1, +, 0, 2);
+                    M(0, 2, -, 0, 1);
+                    M(0, 1, -, 0, 3);
+                    M(1, 0, -, 1, 2);
+                    M(1, 1, +, 1, 2);
+                    M(1, 2, -, 1, 1);
+                    M(1, 1, -, 1, 3);
+                    M(2, 0, -, 2, 2);
+                    M(2, 1, +, 2, 2);
+                    M(2, 2, -, 2, 1);
+                    M(2, 1, -, 2, 3);
+                    M(3, 0, -, 3, 2);
+                    M(3, 1, +, 3, 2);
+                    M(3, 2, -, 3, 1);
+                    M(3, 1, -, 3, 3);
+                }
+            }
+        }
+    }
+}
+
 int main_naive(int argc, char *argv[])
 {
-    std::cout << "main_naive\n";
+    std::cout << "main_naive2\n";
     const size_t bs_l = 256-30;
     const size_t bs_h = 256;
     const size_t channels = 192;
@@ -140,7 +243,7 @@ int main_naive(int argc, char *argv[])
     size_t c = 0;
     for (auto j = 0; j < N; ++j) {
         for (auto i = bs_l; i < bs_h; ++i) {
-            TransformIn(i, &in[0], channels, &out[0]);
+            TransformIn2(i, &in[0], channels, &out[0]);
             c += i;
         }
     }
@@ -236,7 +339,7 @@ int test()
     TransformIn(bs_h, &in[0], channels, &out1[0]);
     std::vector<float> out2(out1.size(),0);
     //ispc::winograd_ispc(bs_h, &in[0], channels, &out2[0]);
-    TransformInSSs(bs_h, &in[0], channels, &out2[0]);
+    TransformIn2(bs_h, &in[0], channels, &out2[0]);
     const size_t X = out1.size();
     size_t diff = 0;
     float total = 0;
@@ -253,14 +356,8 @@ int test()
 
 int main(int argc, char *argv[])
 {
-    return test(); // main_sse(argc,argv);
+    return test(); // main_naive(argc,argv);
 }
-
-
-union sse_i128 {
-   int32_t i4[4];
-   __m128i i128;
-};
 
 
 static void TransformInSSs(const size_t batch_size, const float *input,
@@ -268,7 +365,6 @@ static void TransformInSSs(const size_t batch_size, const float *input,
 {
 
     const __m128i range4 = _mm_set_epi32(3,2,1,0);
-    //__m128i _mm_load_si128 (__m128i const* mem_addr)
     
     for (size_t batch_index = 0; batch_index < batch_size; batch_index++) {
         const float *input_batch =
@@ -283,10 +379,6 @@ static void TransformInSSs(const size_t batch_size, const float *input,
             for (int block_y = 0; block_y < kWtiles; block_y++) {
                 for (int block_x = 0; block_x < kWtiles; block_x++) {
                     // Tiles overlap by 2
-                    // 
-                    //const __m128i block_x_sse = range4;
-                    //const __m128i yin = _mm_set1_epi32 (2 * block_y - 1);
-                    //const __m128i xin =_mm_set_epi32(-1,1,3,5); // 2 * block_x - 1;
                     const int yin = 2 * block_y - 1;
                     const int xin = 2 * block_x - 1;
 
@@ -358,8 +450,6 @@ static void TransformInSSs(const size_t batch_size, const float *input,
                     *wTile_V = T1[3][2] - T1[3][1];
                     wTile_V += V_incr;
                     *wTile_V = T1[3][1] - T1[3][3];
-                    /*
-                    */
                 }
             }
         }
