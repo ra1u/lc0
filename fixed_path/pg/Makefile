@@ -1,6 +1,6 @@
 
 OFILE=wino_perf
-CXXFLAGS=--std=c++14 -O3 -march=native -Wall
+CXXFLAGS=--std=c++14 -O3 -march=native 
 WINO_ISPCPATH=./ispc/objs
 ISPC_O=${WINO_ISPCPATH}/winograd_ispc.o
 
