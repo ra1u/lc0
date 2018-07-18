@@ -697,7 +697,7 @@ void TransformIn2(const size_t batch_size, const float *input,
 void TransformInCo(const size_t batch_size, const float *input,
                    const size_t channels, float *output)
 {
-    static const size_t Par = 16;
+    static const size_t Par = 128;
     float x[kWinogradAlpha][kWinogradAlpha];
     float T1[kWinogradAlpha][kWinogradAlpha];
     float R[16][Par];
@@ -793,11 +793,112 @@ void TransformInCo(const size_t batch_size, const float *input,
     }
 }
 
-int test()
+void TransformInCo2(const size_t batch_size, const float *input,
+                    const size_t channels, float *output)
+{
+     static const size_t Par = 192;
+    float x[kWinogradAlpha][kWinogradAlpha];
+    float T1[kWinogradAlpha][kWinogradAlpha];
+    float R[16][Par];
+    for (size_t batch_index = 0; batch_index < batch_size; batch_index++) {
+       size_t channels_rem = channels;
+       const float *input_batch =
+            input + batch_index * kWidth * kHeight * channels;
+        float *V_batch = &output[channels * kTiles * batch_index];
+            for (int block_y = 0; block_y < kWtiles; block_y++) {
+                for (int block_x = 0; block_x < kWtiles; block_x++) {
+                    // Tiles overlap by 2
+                    const int yin = 2 * block_y - 1;
+                    const int xin = 2 * block_x - 1;
+		    for (size_t channel_long = 0; channel_long < channels;
+			 channel_long += Par) {
+			const size_t channel_step = std::min<size_t>(Par,channels_rem);
+			channels_rem -= channel_step;
+
+
+                    for (size_t ch = 0; ch < channel_step; ++ch) {
+                        const size_t channel = channel_long + ch;
+
+                        const float *input_channel =
+                            input_batch + channel * (kWidth * kHeight);
+                        for (int i = 0; i < kWinogradAlpha; i++) {
+                            for (int j = 0; j < kWinogradAlpha; j++) {
+                                if ((yin + i) >= 0 && (xin + j) >= 0 &&
+                                    (yin + i) < kHeight && (xin + j) < kWidth) {
+                                    x[i][j] = input_channel[(yin + i) * kWidth +
+                                                            (xin + j)];
+                                }
+                                else {
+                                    x[i][j] = 0.0f;
+                                }
+                            }
+                        }
+
+                        // Calculates transpose(B).x.B
+                        // B = [[ 1.0,  0.0,  0.0,  0.0],
+                        //      [ 0.0,  1.0, -1.0,  1.0],
+                        //      [-1.0,  1.0,  1.0,  0.0],
+                        //      [ 0.0,  0.0,  0.0, -1.0]]
+
+                        //     WinogradTile T1, T2;
+
+                        T1[0][0] = x[0][0] - x[2][0];
+                        T1[0][1] = x[0][1] - x[2][1];
+                        T1[0][2] = x[0][2] - x[2][2];
+                        T1[0][3] = x[0][3] - x[2][3];
+                        T1[1][0] = x[1][0] + x[2][0];
+                        T1[1][1] = x[1][1] + x[2][1];
+                        T1[1][2] = x[1][2] + x[2][2];
+                        T1[1][3] = x[1][3] + x[2][3];
+                        T1[2][0] = x[2][0] - x[1][0];
+                        T1[2][1] = x[2][1] - x[1][1];
+                        T1[2][2] = x[2][2] - x[1][2];
+                        T1[2][3] = x[2][3] - x[1][3];
+                        T1[3][0] = x[1][0] - x[3][0];
+                        T1[3][1] = x[1][1] - x[3][1];
+                        T1[3][2] = x[1][2] - x[3][2];
+                        T1[3][3] = x[1][3] - x[3][3];
+			
+			R[0][ch] = T1[0][0] - T1[0][2];
+                        R[1][ch] = T1[0][1] + T1[0][2];
+                        R[2][ch] = T1[0][2] - T1[0][1];
+                        R[3][ch] = T1[0][1] - T1[0][3];
+                        R[4][ch] = T1[1][0] - T1[1][2];
+                        R[5][ch] = T1[1][1] + T1[1][2];
+                        R[6][ch] = T1[1][2] - T1[1][1];
+                        R[7][ch] = T1[1][1] - T1[1][3];
+                        R[8][ch] = T1[2][0] - T1[2][2];
+                        R[9][ch] = T1[2][1] + T1[2][2];
+                        R[10][ch] = T1[2][2] - T1[2][1];
+                        R[11][ch] = T1[2][1] - T1[2][3];
+                        R[12][ch] = T1[3][0] - T1[3][2];
+                        R[13][ch] = T1[3][1] + T1[3][2];
+                        R[14][ch] = T1[3][2] - T1[3][1];
+                        R[15][ch] = T1[3][1] - T1[3][3];
+                    }
+                    const size_t channel = channel_long;
+                    float *V_channel = V_batch + channel_long;
+                    const auto V_incr = channels * kTiles * batch_size;
+                    float *wTile_V =
+                        V_channel + channels * (block_y * kWtiles + block_x);
+                    for (size_t i = 0; i < 16; ++i) {
+                        for (size_t ch = 0; ch < channel_step; ++ch) {
+                            wTile_V[ch] = R[i][ch];
+                        }
+                        wTile_V += V_incr;
+                    }
+                }
+            }
+        }
+    }
+}
+
+template <typename F>
+int test(F& f)
 {
     //const uint32_t bs_l = 256 - 30;
-    const uint32_t bs_h = 256;
-    const uint32_t channels = 192;
+    const uint32_t bs_h = 17; // 256;
+    const uint32_t channels = 31; //192;
     std::vector<float> in(bs_h * kWidth * kHeight * kTiles * channels, 1.0);
     
     std::random_device rd;  //Will be used to obtain a seed for the random number engine
@@ -811,9 +912,10 @@ int test()
   
     std::vector<float> out1(channels * kTiles * kTiles * bs_h, 0);
     TransformIn(bs_h, &in[0], channels, &out1[0]);
+    
     std::vector<float> out2(out1.size(),0);
     //ispc::winograd_ispc(bs_h, &in[0], channels, &out2[0]);
-    TransformInCo(bs_h, &in[0], channels, &out2[0]);
+    f(bs_h, &in[0], channels, &out2[0]);
     //TransformInSSs(bs_h, &in[0], channels, &out2[0]);
     const size_t X = out1.size();
     size_t diff = 0;
@@ -977,59 +1079,31 @@ int test()
                     T1_sse[1] = _mm_add_ps(x[1],x[2]);
                     T1_sse[2] = _mm_sub_ps(x[2],x[1]);
                     T1_sse[3] = _mm_sub_ps(x[1],x[3]);
-                    
-                    typedef float row_t[kWinogradAlpha];
-                    row_t* T1  =  reinterpret_cast<row_t*>(&T1_sse[0]);
-                    const auto V_incr = channels * kTiles * batch_size;
-                    float *wTile_V = &output[channels * kTiles * batch_index] +
-                                     channel +
-                                     channels * (block_y * kWtiles + block_x);
-
 		    
 		    __m128 T2_sse[4];
-
                     const auto swizle = [](int a, int b, int c, int d) -> int {
 			return (a << 6) | (b << 4) | (c << 2) | (d << 0);
                     }; 
 		    for (size_t i = 0; i < 4; ++i)
                     {
-                        __m128 a = _mm_shuffle_ps(T2_sse[i], T2_sse[i],swizle(0, 1, 2, 1));
-			__m128 b = _mm_shuffle_ps(T2_sse[i], T2_sse[i],swizle(2, 2, 1, 3));
-			//const __m128 sig_flag = _mm_set_ps(-1,1,-1,-1);
-			T2_sse[i] = _mm_add_ps(a,b); //_mm_mul_ps(b,sig_flag));
+                        __m128 a = _mm_shuffle_ps(T1_sse[i], T1_sse[i],swizle(0, 1, 2, 1));
+			__m128 b = _mm_shuffle_ps(T1_sse[i], T1_sse[i],swizle(2, 2, 1, 3));
+			const __m128 sig_flag = _mm_set_ps(-1,1,-1,-1);
+			T2_sse[i] = _mm_add_ps(a,_mm_mul_ps(b,sig_flag));
                     }
+		    
+		    
+                    //typedef float row_t[kWinogradAlpha];
+                    float* T1  =  reinterpret_cast<float*>(&T2_sse[0]);
+                    const auto V_incr = channels * kTiles * batch_size;
+                    float *wTile_V = &output[channels * kTiles * batch_index] +
+                                     channel +
+                                     channels * (block_y * kWtiles + block_x);
 
-                    *wTile_V = T1[0][0] - T1[0][2];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[0][1] + T1[0][2];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[0][2] - T1[0][1];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[0][1] - T1[0][3];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[1][0] - T1[1][2];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[1][1] + T1[1][2];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[1][2] - T1[1][1];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[1][1] - T1[1][3];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[2][0] - T1[2][2];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[2][1] + T1[2][2];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[2][2] - T1[2][1];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[2][1] - T1[2][3];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[3][0] - T1[3][2];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[3][1] + T1[3][2];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[3][2] - T1[3][1];
-                    wTile_V += V_incr;
-                    *wTile_V = T1[3][1] - T1[3][3];
+                    for (size_t i = 0; i < 16; ++i) {
+                        *wTile_V = T1[i];
+			wTile_V+=V_incr;
+                    }
                 }
             }
         }
@@ -1045,8 +1119,10 @@ static auto test_helper(T fun,std::string name)
         const uint32_t bs_l = 256 - 30;
         const uint32_t bs_h = 256;
         const uint32_t channels = 192;
-        std::vector<float> in(bs_h * kWidth * kHeight * kTiles * channels, 1.0);
-        std::vector<float> out(channels * kTiles * kTiles * bs_h, 0);
+        static const size_t CA = 1024 / sizeof(float); // cache allignment 
+        std::vector<float> in(bs_h * kWidth * kHeight * kTiles * channels + CA, 1.0);
+        std::vector<float> out(channels * kTiles * kTiles * bs_h + CA, 0);
+	
         int N = 1;
         if (argc == 2) {
             N = std::stoi(argv[1]);
@@ -1417,7 +1493,8 @@ int main(int argc, char *argv[])
     
     //auto f = test_helper(TransformIn,"naive");
     //auto f = test_helper(TransformIn2,"TransformIn2");
-    auto f = test_helper(TransformInCo,"TransformInCo");
+    //auto f = test_helper(TransformInCo2,"TransformInCo2");
+    auto f = test_helper(TransformInSSsCo,"TransformInSSsCo");
     //auto f = test_helper(TransformIn3,"TransformIn3");
     //auto f = test_helper(TransformInTransCacheFull,"TransformInTransCacheFull");
     //auto f = test_helper(TransformInCacheWrong,"naive_wrong");
@@ -1427,7 +1504,7 @@ int main(int argc, char *argv[])
     //auto f = test_helper(ispc::winograd_ispc,"ispc");
     f(argc,argv);
     //testX(argc,argv);
-    test();
+    test(TransformInSSsCo);
     //tor_fix(10,20);
     //torig(10,20);
 }
